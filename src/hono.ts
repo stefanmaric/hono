@@ -197,7 +197,7 @@ export class Hono<
     eventOrExecutionCtx?: ExecutionContext | FetchEvent,
     env?: E['Bindings']
   ) {
-    const request = req instanceof HonoRequest ? req : new HonoRequest(req)
+    const request = new HonoRequest(req)
     const path = getPathFromURL(request.url, this.strict)
     const method = request.method
 
@@ -257,18 +257,15 @@ export class Hono<
     return this.dispatch(event.request, event)
   }
 
-  fetch = (request: HonoRequest | Request, Environment?: E['Bindings'], executionCtx?: ExecutionContext) => {
+  fetch = (
+    request: HonoRequest | Request,
+    Environment?: E['Bindings'],
+    executionCtx?: ExecutionContext
+  ) => {
     return this.dispatch(request, executionCtx, Environment)
   }
 
   request = async (input: HonoRequest | Request | string, requestInit?: RequestInit) => {
-    const req =
-      input instanceof HonoRequest
-        ? input
-        : input instanceof Request
-        ? new HonoRequest(input)
-        : new HonoRequest(input, requestInit)
-
-    return await this.fetch(req)
+    return await this.fetch(new HonoRequest(input, requestInit))
   }
 }

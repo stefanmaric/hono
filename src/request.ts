@@ -4,13 +4,42 @@ import type { Cookie } from './utils/cookie'
 import { parse } from './utils/cookie'
 import { getQueryStringFromURL } from './utils/url'
 
-export class HonoRequest<
-  ParamKeyType extends string = string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Data = any
-> extends Request {
-  paramData?: Record<ParamKeyType, string>
+export interface HonoRequest<ParamKeyType extends string = string, Data = unknown>
+  extends Request,
+    HonoExtensions<ParamKeyType, Data> {
+      clone(): HonoRequest
+    }
 
+export class HonoRequest<ParamKeyType extends string = string, Data = unknown> {
+  constructor(input: RequestInfo | URL | HonoRequest<ParamKeyType, Data>, init?: RequestInit) {
+    if (input instanceof HonoRequest) return input
+
+    const req = input instanceof Request ? input : new Request(input, init)
+
+    return new Proxy(new HonoExtensions<ParamKeyType, Data>(req), {
+      getPrototypeOf() {
+        // The target in reality is a HonoExtension, but that's a private API. We want everything
+        // to the treated as HonoRequest.
+        return HonoRequest.prototype
+      },
+      get(target, prop) {
+        if (prop in target) return (target as any)[prop]
+        return Reflect.get(req, prop, req)
+      },
+    }) as HonoExtensions<ParamKeyType, Data> & Request
+  }
+}
+
+class HonoExtensions<ParamKeyType extends string = string, Data = unknown> {
+  // Ideally, this should be private, but Proxies don't work with private properties.
+  // See: https://github.com/tc39/proposal-class-fields/issues/106
+  req: Request
+
+  constructor(req: Request) {
+    this.req = req
+  }
+
+  paramData?: Record<ParamKeyType, string>
   param(key: ParamKeyType): string
   param(): Record<ParamKeyType, string>
   param(key?: ParamKeyType) {
@@ -34,13 +63,12 @@ export class HonoRequest<
   }
 
   headerData?: Record<string, string>
-
   header(name: string): string
   header(): Record<string, string>
   header(name?: string) {
     if (!this.headerData) {
       this.headerData = {}
-      this.headers.forEach((value, key) => {
+      this.req.headers.forEach((value, key) => {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         this.headerData![key] = value
       })
@@ -56,7 +84,7 @@ export class HonoRequest<
   query(key: string): string
   query(): Record<string, string>
   query(key?: string) {
-    const queryString = getQueryStringFromURL(this.url)
+    const queryString = getQueryStringFromURL(this.req.url)
     const searchParams = new URLSearchParams(queryString)
     if (!this.queryData) {
       this.queryData = {}
@@ -74,7 +102,7 @@ export class HonoRequest<
   queries(key: string): string[]
   queries(): Record<string, string[]>
   queries(key?: string) {
-    const queryString = getQueryStringFromURL(this.url)
+    const queryString = getQueryStringFromURL(this.req.url)
     const searchParams = new URLSearchParams(queryString)
     if (key) {
       return searchParams.getAll(key)
@@ -90,7 +118,7 @@ export class HonoRequest<
   cookie(): Cookie
   cookie(key: string): string | undefined
   cookie(key?: string) {
-    const cookie = this.headers.get('Cookie') || ''
+    const cookie = this.req.headers.get('Cookie') || ''
     const obj = parse(cookie)
 
     if (key) {
@@ -102,12 +130,11 @@ export class HonoRequest<
   }
 
   bodyData?: BodyData
-
   async parseBody<BodyType extends BodyData>(): Promise<BodyType> {
     // Cache the parsed body
     let body: BodyType
     if (!this.bodyData) {
-      body = await parseBody<BodyType>(this)
+      body = await parseBody<BodyType>(this.req)
       this.bodyData = body
     } else {
       body = this.bodyData as BodyType
@@ -115,14 +142,12 @@ export class HonoRequest<
     return body
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   jsonData?: any
-  async json<T>(): Promise<T>
-  async json<JSONData = unknown>() {
+  async json() {
     // Cache the JSON body
-    let jsonData: Partial<JSONData>
+    let jsonData: any
     if (!this.jsonData) {
-      jsonData = JSON.parse(await this.text())
+      jsonData = JSON.parse(await this.req.text())
       this.jsonData = jsonData
     } else {
       jsonData = this.jsonData
@@ -131,7 +156,7 @@ export class HonoRequest<
   }
 
   data?: Data
-  valid(data?: unknown) {
+  valid(data?: unknown): Data {
     if (!this.data) {
       this.data = {} as Data
     }
@@ -139,5 +164,9 @@ export class HonoRequest<
       this.data = data as Data
     }
     return this.data
+  }
+
+  clone() {
+    return new HonoRequest(this.req.clone())
   }
 }
